@@ -1,0 +1,36 @@
+name: test job
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # every 5 minutes
+  workflow_dispatch:     # Allows manual triggering for testing
+
+jobs:
+  hello-world:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Print current date and message
+        run: |
+          echo "Current date and time: $(date)"
+          echo "whats up"
+      
+      - name: Create a simple file
+        run: |
+          mkdir -p output
+          echo "Job ran at: $(date)" >> output/job-log.txt
+          echo "Random number: $RANDOM" >> output/job-log.txt
+      
+      - name: Show file contents
+        run: cat output/job-log.txt
+      
+      - name: Commit results (optional)
+        run: |
+          git config --local user.email "gaby@motherduck.com"
+          git config --local user.name "pulidogaby"
+          git add output/
+          git diff --staged --quiet || git commit -m "Scheduled job ran at $(date)"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
