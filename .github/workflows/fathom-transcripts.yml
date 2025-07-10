@@ -1,7 +1,7 @@
 name: Google Docs to CSV Export
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Every 30 mins
+    - cron: '0 9 * * *'  # Daily at 9 AM UTC
   workflow_dispatch:     # Allow manual triggering
 
 jobs:
@@ -29,9 +29,13 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           export_default_credentials: true
           
+      - name: Create service account key file
+        run: |
+          echo '${{ secrets.GCP_SA_KEY }}' > service_account_key.json
+          
       - name: Run Google Docs export script
         run: |
-          python - <<EOF
+          python3 << 'EOF'
           import os
           import csv
           import io
@@ -43,8 +47,8 @@ jobs:
           import json
           
           # Configuration
-          project_id = '${{ secrets.GCP_PROJECT_ID }}'
-          bucket_name = '${{ secrets.GCS_BUCKET_NAME }}'
+          project_id = os.environ.get('PROJECT_ID', '')
+          bucket_name = os.environ.get('BUCKET_NAME', '')
           shared_drive_name = 'MotherDuck Shared Drive'
           folder_path = 'GTM/Marketing DevRel/Fathom'
           
@@ -54,9 +58,11 @@ jobs:
           print(f"  Looking for: {shared_drive_name}/{folder_path}")
           print("="*50)
           
-          # Set up credentials from GitHub secrets
-          json.loads(os.environ['GCP_SA_KEY'])
-          credentials = service_account.Credentials.from_service_account_info(
+          # Set up credentials from service account key file
+          credentials = service_account.Credentials.from_service_account_file(
+              'service_account_key.json',
+              scopes=['https://www.googleapis.com/auth/drive.readonly']
+          )
               service_account_info,
               scopes=['https://www.googleapis.com/auth/drive.readonly']
           )
@@ -249,6 +255,12 @@ jobs:
           print(f"\nCreated files: {csv_filename} and {metadata_filename}")
           
           EOF
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
+          
+      - name: Clean up service account key
+        run: rm -f service_account_key.json
           
       - name: Upload to Google Cloud Storage
         run: |
@@ -263,8 +275,8 @@ jobs:
       - name: Save results to repository (optional)
         run: |
           # Keep metadata file in repo for tracking
-          git config --local user.email "gaby@motherduck.com"
-          git config --local user.name "pulidogaby"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           
           # Only commit the metadata file (not the full content)
           git add fathom_docs_metadata.csv
