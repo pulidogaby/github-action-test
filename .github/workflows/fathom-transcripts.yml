@@ -37,7 +37,7 @@ jobs:
           echo '${{ secrets.GCP_SA_KEY }}' > service_account_key.json
           
       - name: Run Google Docs export script
-        run: python3 tests/export_google_docs.py
+        run: python3 tests/test_pipeline.py
         env:
           PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
