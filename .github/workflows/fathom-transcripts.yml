@@ -4,20 +4,23 @@ on:
     - cron: '0 6 * * *'  # Daily at 6 AM UTC
   workflow_dispatch:     # Allow manual triggering
 
+permissions:
+  contents: write  # Allow pushing to repository
+
 jobs:
   export-google-docs:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib pandas
@@ -34,233 +37,10 @@ jobs:
           echo '${{ secrets.GCP_SA_KEY }}' > service_account_key.json
           
       - name: Run Google Docs export script
-        run: |
-          python3 << 'EOF'
-          import os
-          import csv
-          import io
-          from datetime import datetime
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaIoBaseDownload
-          from google.oauth2 import service_account
-          import pandas as pd
-          import json
-          
-          # Configuration
-          project_id = os.environ.get('PROJECT_ID', '')
-          bucket_name = os.environ.get('BUCKET_NAME', '')
-          shared_drive_name = 'MotherDuck Shared Drive'
-          folder_path = 'GTM/Marketing DevRel/Fathom'
-          
-          print("Configuration:")
-          print(f"  Project: {project_id}")
-          print(f"  Bucket: {bucket_name}")
-          print(f"  Looking for: {shared_drive_name}/{folder_path}")
-          print("="*50)
-          
-          # Set up credentials from service account key file
-          credentials = service_account.Credentials.from_service_account_file(
-              'service_account_key.json',
-              scopes=['https://www.googleapis.com/auth/drive.readonly']
-          )
-              service_account_info,
-              scopes=['https://www.googleapis.com/auth/drive.readonly']
-          )
-          
-          # Build Drive API service
-          service = build('drive', 'v3', credentials=credentials)
-          
-          def find_folder_id(folder_path):
-              """Find the Google Drive folder ID from a path"""
-              parts = folder_path.split('/')
-              folder_name = parts[-1]
-              parent_name = parts[-2] if len(parts) > 1 else None
-          
-              # Search for the folder
-              query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder'"
-              results = service.files().list(
-                  q=query,
-                  spaces='drive',
-                  fields='files(id, name, parents)',
-                  supportsAllDrives=True,
-                  includeItemsFromAllDrives=True
-              ).execute()
-          
-              folders = results.get('files', [])
-          
-              if parent_name and len(folders) > 1:
-                  # If multiple folders with same name, try to match parent
-                  for folder in folders:
-                      if folder.get('parents'):
-                          parent = service.files().get(
-                              fileId=folder['parents'][0],
-                              fields='name',
-                              supportsAllDrives=True
-                          ).execute()
-                          if parent.get('name') == parent_name:
-                              return folder['id']
-          
-              return folders[0]['id'] if folders else None
-          
-          def export_google_doc_to_text(file_id):
-              """Export a Google Doc to plain text"""
-              try:
-                  # Export as plain text
-                  request = service.files().export_media(
-                      fileId=file_id,
-                      mimeType='text/plain'
-                  )
-          
-                  file_content = io.BytesIO()
-                  downloader = MediaIoBaseDownload(file_content, request)
-          
-                  done = False
-                  while not done:
-                      status, done = downloader.next_chunk()
-          
-                  # Get the text content
-                  file_content.seek(0)
-                  text = file_content.read().decode('utf-8', errors='ignore')
-                  return text.strip()
-          
-              except Exception as e:
-                  print(f"Error exporting file {file_id}: {str(e)}")
-                  return ""
-          
-          def get_files_in_folder(folder_id, folder_name=""):
-              """Get all Google Docs in a folder and its subfolders"""
-              all_files = []
-          
-              # Get files in current folder
-              query = f"'{folder_id}' in parents"
-              results = service.files().list(
-                  q=query,
-                  fields='files(id, name, mimeType, createdTime, modifiedTime)',
-                  supportsAllDrives=True,
-                  includeItemsFromAllDrives=True
-              ).execute()
-          
-              items = results.get('files', [])
-          
-              for item in items:
-                  if item['mimeType'] == 'application/vnd.google-apps.document':
-                      # It's a Google Doc
-                      item['folder'] = folder_name
-                      all_files.append(item)
-                  elif item['mimeType'] == 'application/vnd.google-apps.folder':
-                      # It's a subfolder - recurse into it
-                      subfolder_name = f"{folder_name}/{item['name']}" if folder_name else item['name']
-                      subfolder_files = get_files_in_folder(item['id'], subfolder_name)
-                      all_files.extend(subfolder_files)
-          
-              return all_files
-          
-          # Find the Fathom folder ID
-          print("\nSearching for Fathom folder...")
-          fathom_folder_id = find_folder_id("Fathom")
-          
-          if not fathom_folder_id:
-              # Try alternative search with more specific query
-              query = "name='Fathom' and mimeType='application/vnd.google-apps.folder'"
-              results = service.files().list(
-                  q=query,
-                  spaces='drive',
-                  fields='files(id, name, parents)',
-                  supportsAllDrives=True,
-                  includeItemsFromAllDrives=True,
-                  corpora='allDrives'
-              ).execute()
-          
-              # If multiple Fathom folders, find the one in Marketing DevRel
-              folders = results.get('files', [])
-              for folder in folders:
-                  # Get parent folder info to verify it's the right one
-                  if folder.get('parents'):
-                      parent = service.files().get(
-                          fileId=folder['parents'][0],
-                          fields='name',
-                          supportsAllDrives=True
-                      ).execute()
-                      if parent.get('name') == 'Marketing DevRel':
-                          fathom_folder_id = folder['id']
-                          break
-          
-          if not fathom_folder_id:
-              print("Could not find Fathom folder!")
-              exit(1)
-          
-          print(f"Found Fathom folder with ID: {fathom_folder_id}")
-          
-          # Get all Google Docs in the Fathom folder
-          print("\nFinding all Google Docs...")
-          all_docs = get_files_in_folder(fathom_folder_id)
-          print(f"Found {len(all_docs)} Google Docs")
-          
-          # Process each document and create CSV data
-          csv_data = []
-          total_docs = len(all_docs)
-          
-          for i, doc in enumerate(all_docs):
-              print(f"\nProcessing {i+1}/{total_docs}: {doc['name']}")
-          
-              # Export the document to text
-              text_content = export_google_doc_to_text(doc['id'])
-          
-              # Parse dates
-              created_date = doc['createdTime'][:10] if 'createdTime' in doc else ''
-              modified_date = doc['modifiedTime'][:10] if 'modifiedTime' in doc else ''
-          
-              # Add to CSV data
-              csv_data.append({
-                  'folder': doc['folder'],
-                  'filename': doc['name'],
-                  'file_id': doc['id'],
-                  'created_date': created_date,
-                  'modified_date': modified_date,
-                  'content_length': len(text_content),
-                  'content': text_content
-              })
-          
-              # Show progress
-              if (i + 1) % 5 == 0:
-                  print(f"Progress: {i+1}/{total_docs} documents processed")
-          
-          print(f"\nFinished processing {len(csv_data)} documents")
-          
-          # Create DataFrame for easier viewing
-          df = pd.DataFrame(csv_data)
-          
-          # Show summary
-          print("\nDocument Summary:")
-          print(df.groupby('folder').agg({
-              'filename': 'count',
-              'content_length': ['mean', 'sum']
-          }).round(0))
-          
-          # Save to CSV
-          csv_filename = 'fathom_docs_content.csv'
-          df.to_csv(csv_filename, index=False, encoding='utf-8')
-          print(f"\nSaved to {csv_filename}")
-          
-          # Preview the data (without full content)
-          preview_df = df[['folder', 'filename', 'created_date', 'content_length']].head(10)
-          print("\nPreview of documents:")
-          print(preview_df)
-          
-          # Create a smaller metadata-only version (without full content)
-          metadata_df = df[['folder', 'filename', 'file_id', 'created_date', 'modified_date', 'content_length']]
-          metadata_filename = 'fathom_docs_metadata.csv'
-          metadata_df.to_csv(metadata_filename, index=False)
-          
-          print(f"\nCreated files: {csv_filename} and {metadata_filename}")
-          
-          EOF
+        run: python3 tests/export_google_docs.py
         env:
           PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
           BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
-          
-      - name: Clean up service account key
-        run: rm -f service_account_key.json
           
       - name: Upload to Google Cloud Storage
         run: |
@@ -272,11 +52,10 @@ jobs:
           gsutil ls -l gs://${{ secrets.GCS_BUCKET_NAME }}/fathom_docs_content.csv
           gsutil ls -l gs://${{ secrets.GCS_BUCKET_NAME }}/fathom_docs_metadata.csv
           
-      - name: Save results to repository (optional)
+      - name: Save metadata to repository
         run: |
-          # Keep metadata file in repo for tracking
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "gaby@motherduck.com"
+          git config --local user.name "pulidogaby"
           
           # Only commit the metadata file (not the full content)
           git add fathom_docs_metadata.csv
@@ -292,3 +71,7 @@ jobs:
           path: |
             fathom_docs_content.csv
             fathom_docs_metadata.csv
+            
+      - name: Clean up sensitive files
+        run: rm -f service_account_key.json
+        if: always()
