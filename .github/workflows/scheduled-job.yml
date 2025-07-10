@@ -4,6 +4,9 @@ on:
     - cron: '* * * * *'  # test every minute
   workflow_dispatch:     # Allows manual triggering for testing
 
+permissions:
+  contents: write
+  
 jobs:
   hello-world:
     runs-on: ubuntu-latest
