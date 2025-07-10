@@ -1,7 +1,7 @@
 name: test job
 on:
   schedule:
-    - cron: '*/5 * * * *'  # every 5 minutes
+    - cron: '* * * * *'  # test every minute
   workflow_dispatch:     # Allows manual triggering for testing
 
 jobs:
